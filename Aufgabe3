@@ -1,0 +1,213 @@
+# Beispiel einer Ablaufkette mit Abbruch des Ablaufs durch Not-Aus
+from PyQt5.QtWidgets import QMainWindow, QApplication
+from PyQt5.uic import loadUi
+from PyQt5.QtCore import QTimer
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush
+from Input_Output import Input, Output
+from Actor import Contactor, Lamp
+from MovingObjects import Packet, LightBeam
+import sys
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super(MainWindow, self).__init__()
+        loadUi("Conveyor_Belt_Control_GUI.ui", self)
+
+        self.__step = 1
+
+        # Instanziieren der Lichtschranken
+        self.__light_beam_interrupted = 265                                             # y-Position für Lichtstrahl unterbrochen
+        self.__light_beam_restored = 200                                                # y-Position für Lichtstrahl wiederhergestellt
+        self.__light_beam_B1 = LightBeam(105, 280, 105, self.__light_beam_interrupted)  # Lichtschranke B1
+        self.__light_beam_B2 = LightBeam(375, 280, 375, self.__light_beam_restored)     # Lichtschranke B2
+        
+        # Instanziieren des Pakets
+        self.__packet = Packet(25, 215, 80, 50)
+
+        # Instanziieren der Aktoren
+        self.__lamp_P1 = Lamp(150, 13, 25, 25, "operation", False)
+        self.__lamp_P2 = Lamp(150, 48, 25, 25, "stop", False)
+        self.__lamp_P3 = Lamp(150, 85, 25, 25, "error", False)
+
+        self.__contactor_Q1 = Contactor(False)              # Schütz Q1 für Motor M1 im Linkslauf
+        self.__contactor_Q2 = Contactor(False)              # Schütz Q2 für Motor M1 im Rechtslauf
+
+        # Instanziieren der Input/Outputs
+        self.__inp_S1 = Input(False)                        # Verbunden mit Schließerkontakt (S1 initial geöffnet)
+        self.__inp_S2 = Input(False)                        # Verbunden mit Schließerkontakt (S2 initial geöffnet)
+        self.__inp_S3 = Input(False)                        # Verbunden mit Schließerkontakt (S3 initial geöffnet)
+        self.__inp_B1 = Input(False)                        # Verbunden mit Öffnerkontakt (B1 initial geöffnet)
+        self.__inp_B2 = Input(True)                         # Verbunden mit Öffnerkontakt (B2 initial geschlossen)
+
+        self.__out_P1 = Output(False, self.__lamp_P1)       # Motorbetriebsleuchte
+        self.__out_P2 = Output(False, self.__lamp_P2)       # Motorstoppleuchte
+        self.__out_P3 = Output(False, self.__lamp_P3)
+        self.__out_Q1 = Output(False, self.__contactor_Q1)  # Schütz Q1 für Linkslauf
+        self.__out_Q2 = Output(False, self.__contactor_Q2)  # Schütz Q2 für Rechtslauf
+        
+        # Timer instanziieren
+        self.timer_seq_chain = QTimer(self)
+        
+        # Signal des Timers mit Slot verbinden
+        self.timer_seq_chain.timeout.connect(self.seq_chain)
+        self.timer_seq_chain.start(16)                      # Timer-Schleife starten
+
+        # Signale des PushButtons mit Slots verbinden
+        self.btn_S1.pressed.connect(self.btn_S1_pressed)
+        self.btn_S1.released.connect(self.btn_S1_released)
+        self.btn_S2.pressed.connect(self.btn_S2_pressed)
+        self.btn_S2.released.connect(self.btn_S2_released)
+        self.btn_S3.toggled.connect(self.btn_S3_toggled)
+        self.sen_B1.toggled.connect(self.sen_B1_toggled)
+        self.sen_B2.toggled.connect(self.sen_B2_toggled)
+        
+
+    # Slot zum Schließen des Tasters S1
+    def btn_S1_pressed(self):
+        self.__inp_S1.set_state(True)
+
+    # Slot zum Öffnen des Tasters S1
+    def btn_S1_released(self):
+        self.__inp_S1.set_state(False)
+        
+
+    # Slot zum Schließen des Tasters S2
+    def btn_S2_pressed(self):
+        self.__inp_S2.set_state(True)
+
+    # Slot zum Öffnen des Tasters S2
+    def btn_S2_released(self):
+        self.__inp_S2.set_state(False)
+
+    # Slot zum Auslösen des Motorschutzrelais B3
+    def btn_S3_toggled(self):
+        if self.__inp_S3.get_state() == True:
+            self.__inp_S3.set_state(False)
+
+        elif self.__inp_S3.get_state() == False:
+            self.__inp_S3.set_state(True)
+            
+    # Slot zum Unterbrechen/Verbinden des linken Lichtschrankensensors B1
+    def sen_B1_toggled(self):
+        if self.__inp_B1.get_state() == True:
+            self.__inp_B1.set_state(False)
+            self.__light_beam_B1.set_light_beam_endpoint(self.__light_beam_interrupted)
+        elif self.__inp_B1.get_state() == False:
+            self.__inp_B1.set_state(True)
+            self.__light_beam_B1.set_light_beam_endpoint(self.__light_beam_restored)
+    
+    # Slot zum Unterbrechen/Verbinden des rechten Lichtschrankensensors B1
+    def sen_B2_toggled(self):
+        if self.__inp_B2.get_state() == True:
+            self.__inp_B2.set_state(False)
+            self.__light_beam_B2.set_light_beam_endpoint(self.__light_beam_interrupted)
+        elif self.__inp_B2.get_state() == False:
+            self.__inp_B2.set_state(True)
+            self.__light_beam_B2.set_light_beam_endpoint(self.__light_beam_restored)
+
+
+    # Timer-Slot der Ablaufkette
+    def seq_chain(self):
+        # Programmlogik der Ablaufkette
+        #Schritt 1
+        if self.__step == 1:
+            #Lampe P2 einschalten
+            self.__out_P2.set_state(True)
+            #Überprüfung der Transitionsbedingung
+            if self.__inp_S1.get_state() == True and self.__inp_B1.get_state() == False:
+                self.__step == 2
+
+        #Schritt 2
+        if self.__step == 2:
+            #Lampe P1 einschalten
+            self.__out_P1.set_state(True)
+            #Lampe P2 ausschalten
+            self.__out_P2.set_state(False)
+            #Schütz Q2 einschalten
+            self.__out_Q2.set_state(True)
+            
+        #Schritt 3
+
+        self.move_packet()
+        self.update()
+
+    # Methode zum Positionsänderung des Pakets
+    def move_packet(self):
+        sen_B1_mid_pos = self.sen_B1.x() + self.sen_B1.width() // 2                 # Mittelpunkt des Lichtschrankensensors B1
+        sen_B2_mid_pos = self.sen_B2.x() + self.sen_B2.width() // 2                 # Mittelpunkt des Lichtschrankensensors B2
+        # Bewegung nach rechts (Motor M1 im Rechtslauf)
+        if self.__out_Q1.get_state() == True:
+            # linke Paketkante hat Lichtschranke B1 noch nicht erreicht
+            if self.__packet.get_pos_x() > sen_B1_mid_pos:
+                self.sen_B1.setChecked(False)
+                self.__packet.shift_left()
+                # Lichtschranke des Lichtschrankensensors B2 wiederherstellen, wenn rechte Paketkante Lichtschranke B2 verlässt
+                if self.__packet.get_pos_x() == sen_B2_mid_pos - self.__packet.get_width() - 1:
+                    self.sen_B2.setChecked(False)
+            # linke Paketkante hat Lichtschranke B1 erreicht
+            elif self.__packet.get_pos_x() == sen_B1_mid_pos:
+                self.sen_B1.setChecked(True)
+
+        # Bewegung nach links (Motor M1 im Linkslauf)
+        if self.__out_Q2.get_state() == True:
+            # rechte Paketkante hat Lichtschranke B2 noch nicht erreicht
+            if self.__packet.get_pos_x() < sen_B2_mid_pos - self.__packet.get_width():
+                self.sen_B2.setChecked(False)
+                self.__packet.shift_right()
+                # Lichtschranke des Lichtschrankensensors B1 wiederherstellen, wenn linke Paketkante Lichtschranke B1 verlässt
+                if self.__packet.get_pos_x() == sen_B1_mid_pos + 1:
+                    self.sen_B1.setChecked(False)
+            # rechte Paketkante hat Lichtschranke B2 erreicht
+            elif self.__packet.get_pos_x() == sen_B2_mid_pos - self.__packet.get_width():
+                self.sen_B2.setChecked(True)
+    
+    # Event zum Zeichnen der Lampe
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        self.draw_packet(painter)
+        self.draw_light_barrier(painter)
+        self.draw_lamp(painter)
+
+    def draw_packet(self, painter):
+        # Förderband
+        painter.setBrush(QColor(200, 200, 200))             # Farbe des Förderbands: Hellgrau
+        painter.drawRect(10, 200, 350, 80)                  # Förderband zeichnen
+        # Paket
+        painter.setBrush(QColor(207, 185, 151))             # Farbe des Pakets: Beige
+        painter.drawRect(self.__packet.get_pos_x(), self.__packet.get_pos_y(), 
+                         self.__packet.get_width(), self.__packet.get_height())
+
+    # Methode zum Zeichnen der Lampe
+    def draw_lamp(self, painter):
+        # Lampe P1 zeichnen
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QColor(0, 0, 0))
+        painter.setBrush(QColor(self.__lamp_P1.get_color()))
+        painter.drawEllipse(self.__lamp_P1.get_pos_x(), self.__lamp_P1.get_pos_y(), 
+                            self.__lamp_P1.get_width(), self.__lamp_P1.get_height())
+        painter.setBrush(QColor(self.__lamp_P2.get_color()))
+        painter.drawEllipse(self.__lamp_P2.get_pos_x(), self.__lamp_P2.get_pos_y(), 
+                            self.__lamp_P2.get_width(), self.__lamp_P2.get_height())
+        painter.setBrush(QColor(self.__lamp_P3.get_color()))
+        painter.drawEllipse(self.__lamp_P3.get_pos_x(), self.__lamp_P3.get_pos_y(), 
+                            self.__lamp_P3.get_width(), self.__lamp_P3.get_height())
+
+    # Methode zum Zeichnen der Lichtschranken
+    def draw_light_barrier(self, painter):
+        # Lichtschranke
+        sen_B1_mid_pos = self.sen_B1.x() + self.sen_B1.width() // 2
+        sen_B2_mid_pos = self.sen_B2.x() + self.sen_B2.width() // 2
+        light_beam = QPen(QColor(255, 0, 0))
+        light_beam.setWidth(2)
+        painter.setPen(light_beam)
+        painter.drawLine(sen_B1_mid_pos, self.sen_B1.y(), 
+                         sen_B1_mid_pos, self.__light_beam_B1.get_light_beam_endpoint())  # Lichtschranke für B1 zeichnen
+        painter.drawLine(sen_B2_mid_pos, self.sen_B2.y(), 
+                         sen_B2_mid_pos, self.__light_beam_B2.get_light_beam_endpoint())  # Lichtschranke für B2 zeichnen
+
+# Hauptprogramm        
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
